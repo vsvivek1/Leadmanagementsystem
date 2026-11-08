@@ -1,4 +1,5 @@
 import io
+import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -27,8 +28,8 @@ class FakeMailer:
         self.sent.append((to, subject, body, mid))
         return mid
 
-    def fetch_since(self, since):
-        return self.inbox
+    def fetch_since(self, since, wanted=None):
+        return [m for m in self.inbox if wanted is None or wanted(m.from_addr, m.in_reply_to)]
 
 
 def xlsx(rows):
@@ -40,16 +41,32 @@ def xlsx(rows):
     return buf.getvalue()
 
 
-@pytest.fixture
-def settings(tmp_path):
+PG_URL = os.environ.get("TEST_DATABASE_URL", "")
+BACKENDS = ["sqlite"] + (["postgres"] if PG_URL else [])
+
+
+def _reset_pg():
+    import psycopg
+    with psycopg.connect(PG_URL, autocommit=True) as conn:
+        conn.execute("DROP TABLE IF EXISTS leadapp.replies, leadapp.emails, leadapp.campaigns,"
+                     " leadapp.templates, leadapp.leads, leadapp.meta CASCADE")
+
+
+@pytest.fixture(params=BACKENDS)
+def settings(request, tmp_path):
+    url = ""
+    if request.param == "postgres":
+        _reset_pg()
+        url = PG_URL
     s = get_settings()
-    return replace(s, db_path=str(tmp_path / "t.db"), scheduler_enabled=False, send_hours=(0, 24),
-                   sender_name="Vivek", app_password="", email_address="", email_password="")
+    return replace(s, db_path=str(tmp_path / "t.db"), database_url=url, scheduler_enabled=False,
+                   send_hours=(0, 24), sender_name="Vivek", app_password="", email_address="",
+                   email_password="", cron_secret="tok", max_send_per_run=25)
 
 
 @pytest.fixture
 def db(settings):
-    return Database(settings.db_path)
+    return Database(settings.db_path, settings.database_url)
 
 
 def test_import_flexible_headers_and_dedupe(db):
@@ -153,3 +170,17 @@ def test_password_protection(settings):
     client = TestClient(create_app(replace(settings, app_password="s3cret"), FakeMailer()))
     assert client.get("/").status_code == 401
     assert client.get("/", auth=("any", "s3cret")).status_code == 200
+
+
+def test_cron_tick(settings):
+    mailer = FakeMailer()
+    client = TestClient(create_app(replace(settings, app_password="s3cret"), mailer))
+    auth = ("any", "s3cret")
+    client.post("/leads/upload", auth=auth, files={"file": ("l.csv", b"email\na@x.example\nb@x.example\n")})
+    client.post("/campaigns/create", auth=auth, data={"name": "c", "template_id": 1, "statuses": ["new"]})
+    client.post("/campaigns/1/toggle", auth=auth)
+    assert client.get("/cron/tick").status_code == 401
+    assert client.get("/cron/tick?key=wrong").status_code == 401
+    r = client.get("/cron/tick", headers={"Authorization": "Bearer tok"})
+    assert r.status_code == 200 and r.json()["campaigns"]["1"]["sent"] == 2
+    assert len(mailer.sent) == 2

@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import engine
 from .config import Settings, get_settings
-from .db import LEAD_STATUSES, Database
+from .db import LEAD_STATUSES, Database, now
 from .importer import import_leads, sample_workbook
 from .mailer import SmtpImapMailer
 from .templating import render_email, validate
@@ -40,11 +40,11 @@ DEFAULT_TEMPLATE = {
 
 def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
     settings = settings or get_settings()
-    db = Database(settings.db_path)
+    db = Database(settings.db_path, settings.database_url)
     mailer = mailer or SmtpImapMailer(settings)
     if not db.scalar("SELECT COUNT(*) FROM templates"):
-        db.run("INSERT INTO templates(name, subject, body, created_at) VALUES(?, ?, ?, datetime('now'))",
-               (DEFAULT_TEMPLATE["name"], DEFAULT_TEMPLATE["subject"], DEFAULT_TEMPLATE["body"]))
+        db.run("INSERT INTO templates(name, subject, body, created_at) VALUES(?, ?, ?, ?)",
+               (DEFAULT_TEMPLATE["name"], DEFAULT_TEMPLATE["subject"], DEFAULT_TEMPLATE["body"], now()))
 
     scheduler = BackgroundScheduler(timezone=settings.timezone)
 
@@ -83,7 +83,7 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
 
     @app.middleware("http")
     async def basic_auth(request: Request, call_next):
-        if settings.app_password and not request.url.path.startswith("/static"):
+        if settings.app_password and not request.url.path.startswith(("/static", "/cron/")):
             header = request.headers.get("authorization", "")
             ok = False
             if header.lower().startswith("basic "):
@@ -130,14 +130,17 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
             "replies_week": db.scalar("SELECT COUNT(*) FROM replies WHERE received_at > ?", (week_ago,)),
             "interested": counts["interested"],
         }
+        start = (datetime.now(timezone.utc) - timedelta(days=13)).date().isoformat()
+        sent_by_day = {r["d"]: r["n"] for r in db.all(
+            "SELECT substr(sent_at, 1, 10) AS d, COUNT(*) AS n FROM emails WHERE status IN ('sent','simulated')"
+            " AND sent_at >= ? GROUP BY substr(sent_at, 1, 10)", (start,))}
+        replies_by_day = {r["d"]: r["n"] for r in db.all(
+            "SELECT substr(received_at, 1, 10) AS d, COUNT(*) AS n FROM replies WHERE received_at >= ?"
+            " GROUP BY substr(received_at, 1, 10)", (start,))}
         days = []
         for i in range(13, -1, -1):
             d = (datetime.now(timezone.utc) - timedelta(days=i)).date().isoformat()
-            days.append({
-                "label": d[5:],
-                "sent": db.scalar("SELECT COUNT(*) FROM emails WHERE status IN ('sent','simulated') AND substr(sent_at,1,10) = ?", (d,)),
-                "replies": db.scalar("SELECT COUNT(*) FROM replies WHERE substr(received_at,1,10) = ?", (d,)),
-            })
+            days.append({"label": d[5:], "sent": sent_by_day.get(d, 0), "replies": replies_by_day.get(d, 0)})
         peak = max([1] + [max(d["sent"], d["replies"]) for d in days])
         recent_replies = db.all(
             "SELECT r.*, l.name, l.school, l.status FROM replies r JOIN leads l ON l.id = r.lead_id"
@@ -257,8 +260,8 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
         if id:
             db.run("UPDATE templates SET name = ?, subject = ?, body = ? WHERE id = ?", (name, subject, body, id))
         else:
-            id = db.run("INSERT INTO templates(name, subject, body, created_at) VALUES(?, ?, ?, datetime('now'))",
-                        (name, subject, body))
+            id = db.run("INSERT INTO templates(name, subject, body, created_at) VALUES(?, ?, ?, ?)",
+                        (name, subject, body, now()))
         return back(f"/templates?edit={id}", msg="Template saved")
 
     @app.post("/templates/{tid}/delete")
@@ -284,8 +287,8 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
     def campaign_create(name: str = Form(...), template_id: int = Form(...), statuses: list[str] = Form(["new"]),
                         interval_days: int = Form(7), max_per_lead: int = Form(3), daily_limit: int = Form(50)):
         db.run("INSERT INTO campaigns(name, template_id, statuses, interval_days, max_per_lead, daily_limit, created_at)"
-               " VALUES(?, ?, ?, ?, ?, ?, datetime('now'))",
-               (name, template_id, ",".join(statuses), max(interval_days, 0), max(max_per_lead, 1), max(daily_limit, 1)))
+               " VALUES(?, ?, ?, ?, ?, ?, ?)",
+               (name, template_id, ",".join(statuses), max(interval_days, 0), max(max_per_lead, 1), max(daily_limit, 1), now()))
         return back("/campaigns", msg="Campaign created. Turn it on to start sending.")
 
     @app.post("/campaigns/{cid}/toggle")
@@ -324,6 +327,23 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
             db.set_meta("last_reply_error", str(exc))
             return back("/replies", err=f"Could not read the inbox: {exc}")
         return back("/replies", msg=f"Inbox checked: {n} new repl{'y' if n == 1 else 'ies'}")
+
+    # ---------- Timer endpoint (called every few minutes by an external scheduler) ----------
+    @app.api_route("/cron/tick", methods=["GET", "POST"])
+    def cron_tick(request: Request):
+        key = request.query_params.get("key") or request.headers.get("authorization", "").removeprefix("Bearer ")
+        if not settings.cron_secret or not secrets.compare_digest(key, settings.cron_secret):
+            raise HTTPException(401)
+        out = {}
+        try:
+            out["new_replies"] = engine.check_replies(db, mailer)
+            db.set_meta("last_reply_error", "")
+        except Exception as exc:
+            db.set_meta("last_reply_error", str(exc))
+            out["reply_error"] = str(exc)
+        out["campaigns"] = {cid: {"sent": r.sent, "failed": r.failed, "note": r.skipped_reason}
+                            for cid, r in engine.run_active_campaigns(db, mailer, settings).items()}
+        return out
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):

@@ -55,22 +55,40 @@ class SmtpImapMailer:
             smtp.send_message(msg)
         return msg["Message-ID"]
 
-    def fetch_since(self, since: date) -> list[IncomingMessage]:
-        """Fetch inbox messages received since a date, without marking them as read."""
+    def fetch_since(self, since: date, wanted=None) -> list[IncomingMessage]:
+        """Fetch inbox messages received since a date, without marking them as read.
+
+        `wanted(from_addr, refs)` filters on headers first so only relevant bodies are downloaded.
+        """
         if not self.s.imap_configured:
             return []
         out = []
-        with imaplib.IMAP4_SSL(self.s.imap_host, self.s.imap_port) as imap:
+        with imaplib.IMAP4_SSL(self.s.imap_host, self.s.imap_port, timeout=60) as imap:
             imap.login(self.s.email_address, self.s.email_password)
             imap.select(self.s.imap_folder, readonly=True)
             typ, data = imap.search(None, "SINCE", since.strftime("%d-%b-%Y"))
-            if typ != "OK":
+            if typ != "OK" or not data[0]:
                 return []
-            for num in data[0].split():
-                typ, parts = imap.fetch(num, "(BODY.PEEK[])")
-                if typ != "OK" or not parts or not isinstance(parts[0], tuple):
+            nums = data[0].split()
+            matches = []
+            for i in range(0, len(nums), 200):
+                batch = b",".join(nums[i:i + 200])
+                typ, parts = imap.fetch(batch, "(BODY.PEEK[HEADER.FIELDS (FROM IN-REPLY-TO REFERENCES)])")
+                if typ != "OK":
                     continue
-                out.append(parse_message(parts[0][1]))
+                for part in parts:
+                    if not isinstance(part, tuple):
+                        continue
+                    num = part[0].split()[0]
+                    hdr = email.message_from_bytes(part[1], policy=default_policy)
+                    from_addr = email.utils.parseaddr(str(hdr.get("From", "")))[1].lower()
+                    refs = re.findall(r"<[^>]+>", " ".join(str(hdr.get(h, "")) for h in ("In-Reply-To", "References")))
+                    if wanted is None or wanted(from_addr, refs):
+                        matches.append(num)
+            for num in matches:
+                typ, parts = imap.fetch(num, "(BODY.PEEK[])")
+                if typ == "OK" and parts and isinstance(parts[0], tuple):
+                    out.append(parse_message(parts[0][1]))
         return out
 
 

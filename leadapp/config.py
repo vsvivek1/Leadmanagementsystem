@@ -28,6 +28,9 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
 @dataclass
 class Settings:
     db_path: str
+    database_url: str
+    cron_secret: str
+    max_send_per_run: int
     provider: str
     email_address: str
     email_password: str
@@ -71,6 +74,9 @@ def get_settings() -> Settings:
         start, end = 0, 24
     return Settings(
         db_path=os.environ.get("LEADAPP_DB", str(ROOT / "data" / "leads.db")),
+        database_url=os.environ.get("DATABASE_URL", ""),
+        cron_secret=os.environ.get("CRON_SECRET", ""),
+        max_send_per_run=_int("MAX_SEND_PER_RUN", 25),
         provider=provider,
         email_address=os.environ.get("EMAIL_ADDRESS", ""),
         email_password=os.environ.get("EMAIL_PASSWORD", ""),
@@ -85,5 +91,5 @@ def get_settings() -> Settings:
         send_hours=(start, end),
         timezone=os.environ.get("TIMEZONE", "Asia/Kolkata"),
         app_password=os.environ.get("APP_PASSWORD", ""),
-        scheduler_enabled=os.environ.get("SCHEDULER_ENABLED", "1") not in ("0", "false", "no"),
+        scheduler_enabled=os.environ.get("SCHEDULER_ENABLED", "0" if os.environ.get("VERCEL") else "1") not in ("0", "false", "no"),
     )

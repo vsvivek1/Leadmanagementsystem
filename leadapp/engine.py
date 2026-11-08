@@ -94,6 +94,8 @@ def run_campaign(db: Database, mailer, settings: Settings, campaign_id: int, ign
         (campaign_id, since),
     )
     budget = max(0, campaign["daily_limit"] - sent_today)
+    if settings.max_send_per_run:
+        budget = min(budget, settings.max_send_per_run)
     if budget == 0:
         result.skipped_reason = "Daily limit reached"
     for lead in eligible_leads(db, campaign)[:budget]:
@@ -140,11 +142,12 @@ def process_replies(db: Database, messages) -> int:
              m.subject, m.body[:20000], m.received_at, now()),
         )
         new_status = "unsubscribed" if OPT_OUT_RE.search(m.body or "") else "replied"
+        last = db.scalar("SELECT last_reply_at FROM leads WHERE id = ?", (lead_id,)) or ""
         db.run(
-            "UPDATE leads SET last_reply_at = MAX(COALESCE(last_reply_at, ''), ?),"
+            "UPDATE leads SET last_reply_at = ?,"
             " status = CASE WHEN ? = 'unsubscribed' THEN 'unsubscribed'"
             "  WHEN status IN ('new', 'contacted') THEN 'replied' ELSE status END WHERE id = ?",
-            (m.received_at, new_status, lead_id),
+            (max(last, m.received_at), new_status, lead_id),
         )
         saved += 1
     return saved
@@ -152,7 +155,17 @@ def process_replies(db: Database, messages) -> int:
 
 def check_replies(db: Database, mailer) -> int:
     last = db.get_meta("last_reply_check")
-    since = date.fromisoformat(last[:10]) - timedelta(days=1) if last else date.today() - timedelta(days=30)
-    saved = process_replies(db, mailer.fetch_since(since))
+    since = date.fromisoformat(last[:10]) - timedelta(days=1) if last else date.today() - timedelta(days=14)
+    lead_emails = {r["email"].lower() for r in db.all("SELECT email FROM leads")}
+    if not lead_emails:
+        db.set_meta("last_reply_check", now())
+        return 0
+
+    def wanted(from_addr, refs):
+        if from_addr in lead_emails:
+            return True
+        return any(db.scalar("SELECT 1 FROM emails WHERE message_id = ?", (r,)) for r in refs[-3:])
+
+    saved = process_replies(db, mailer.fetch_since(since, wanted))
     db.set_meta("last_reply_check", now())
     return saved
