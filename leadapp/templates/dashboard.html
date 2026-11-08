@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_status.html" import badge %}
+{% block content %}
+<h1>Dashboard</h1>
+<section class="cards">
+  <div class="card"><div class="k">Leads</div><div class="v">{{ stats.total }}</div></div>
+  <div class="card"><div class="k">Emailed</div><div class="v">{{ stats.contacted }}</div></div>
+  <div class="card"><div class="k">Replied</div><div class="v">{{ stats.replied }}</div><div class="sub">{{ stats.reply_rate }}% reply rate</div></div>
+  <div class="card"><div class="k">Interested</div><div class="v">{{ stats.interested }}</div></div>
+  <div class="card"><div class="k">Sent, last 7 days</div><div class="v">{{ stats.sent_week }}</div>{% if stats.failed_week %}<div class="sub bad-t">{{ stats.failed_week }} failed</div>{% endif %}</div>
+  <div class="card"><div class="k">Replies, last 7 days</div><div class="v">{{ stats.replies_week }}</div></div>
+</section>
+
+<div class="grid2">
+  <section class="panel">
+    <h2>Lead status</h2>
+    {% set total = stats.total or 1 %}
+    <div class="stack">
+      {% for s, n in counts.items() if n %}<div class="seg s-{{ s }}" style="flex: {{ n }}" title="{{ s }}: {{ n }}"></div>{% endfor %}
+    </div>
+    <ul class="legend">
+      {% for s, n in counts.items() %}
+      <li><a href="/leads?status={{ s }}">{{ badge(s) }}</a> <b>{{ n }}</b> <span class="muted">{{ (100 * n / total) | round | int }}%</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="panel">
+    <h2>Last 14 days</h2>
+    <div class="bars">
+      {% for d in days %}
+      <div class="day" title="{{ d.label }}: {{ d.sent }} sent, {{ d.replies }} replies">
+        <div class="pair">
+          <div class="bar sent" style="height: {{ (100 * d.sent / peak) | round }}%"></div>
+          <div class="bar reply" style="height: {{ (100 * d.replies / peak) | round }}%"></div>
+        </div>
+        <div class="lbl">{{ d.label[3:] }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="legend inline"><span><i class="dot sent"></i>Emails sent</span><span><i class="dot reply"></i>Replies</span></div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="row-between">
+    <h2>Latest replies</h2>
+    <form method="post" action="/replies/check"><button class="btn small">Check inbox now</button></form>
+  </div>
+  <p class="muted small">Inbox last checked: {{ last_check | dt or 'never' }}{% if reply_error %} · <span class="bad-t">last check failed: {{ reply_error }}</span>{% endif %}</p>
+  {% if recent_replies %}
+  <table>
+    <thead><tr><th>From</th><th>Reply</th><th>Status</th><th>Received</th></tr></thead>
+    <tbody>
+    {% for r in recent_replies %}
+      <tr>
+        <td><a href="/leads/{{ r.lead_id }}">{{ r.school or r.name or r.from_addr }}</a><div class="muted small">{{ r.name }}</div></td>
+        <td class="snippet">{{ r.body[:160] }}{% if r.body|length > 160 %}…{% endif %}</td>
+        <td>{{ badge(r.status) }}</td>
+        <td class="nowrap small">{{ r.received_at | dt }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No replies yet.</p>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Campaigns</h2>
+  {% if campaigns %}
+  <table>
+    <thead><tr><th>Campaign</th><th>Template</th><th>State</th><th>Sent</th><th>Leads replied</th></tr></thead>
+    <tbody>
+    {% for c in campaigns %}
+      <tr><td><a href="/campaigns">{{ c.name }}</a></td><td>{{ c.template_name }}</td>
+        <td>{% if c.active %}<span class="badge on">running</span>{% else %}<span class="badge off">paused</span>{% endif %}</td>
+        <td>{{ c.sent }}</td><td>{{ c.replies }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No campaigns yet. <a href="/campaigns">Create one</a> to start emailing leads on a schedule.</p>{% endif %}
+</section>
+{% endblock %}

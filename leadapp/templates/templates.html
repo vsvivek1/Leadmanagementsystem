@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Templates · School Leads{% endblock %}
+{% block content %}
+<h1>Email templates</h1>
+<div class="grid2 wide-right">
+  <section class="panel">
+    <h2>Templates</h2>
+    <ul class="list">
+      {% for t in templates_list %}
+      <li class="{{ 'on' if current and current.id == t.id }}"><a href="/templates?edit={{ t.id }}">{{ t.name }}</a>
+        <form method="post" action="/templates/{{ t.id }}/delete" class="inline" onsubmit="return confirm('Delete this template?')"><button class="link danger-t">delete</button></form></li>
+      {% endfor %}
+    </ul>
+    <a class="btn secondary small" href="/templates">+ New template</a>
+    <h3>Personalise with</h3>
+    <p class="muted small">Click to copy. Missing values come out blank; use <code>{{ "{{ name or 'Principal' }}" }}</code> for a fallback.</p>
+    <div class="chips">{% for v in variables %}<code class="chip" onclick="navigator.clipboard.writeText(this.textContent)">{{ '{{ ' ~ v ~ ' }}' }}</code>{% endfor %}</div>
+  </section>
+  <section class="panel">
+    <h2>{{ 'Edit: ' ~ current.name if current else 'New template' }}</h2>
+    <form method="post" action="/templates/save" class="stacked">
+      <input type="hidden" name="id" value="{{ current.id if current else 0 }}">
+      <label>Name<input name="name" required value="{{ current.name if current else '' }}"></label>
+      <label>Subject<input name="subject" required value="{{ current.subject if current else '' }}"></label>
+      <label>Body<textarea name="body" rows="14" required>{{ current.body if current else '' }}</textarea></label>
+      <button class="btn">Save template</button>
+    </form>
+    {% if preview %}
+    <h3>Preview for {{ preview.lead }}</h3>
+    <div class="msg email"><div class="msg-head"><b>{{ preview.subject }}</b></div><pre class="msg-body">{{ preview.body }}</pre></div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

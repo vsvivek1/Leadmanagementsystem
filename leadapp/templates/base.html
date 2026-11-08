@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}School Leads{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">School Leads</a>
+  <nav>
+    {% set path = request.url.path %}
+    <a href="/" class="{{ 'on' if path == '/' }}">Dashboard</a>
+    <a href="/leads" class="{{ 'on' if path.startswith('/leads') }}">Leads</a>
+    <a href="/replies" class="{{ 'on' if path.startswith('/replies') }}">Replies</a>
+    <a href="/templates" class="{{ 'on' if path.startswith('/templates') }}">Templates</a>
+    <a href="/campaigns" class="{{ 'on' if path.startswith('/campaigns') }}">Campaigns</a>
+    <a href="/settings" class="{{ 'on' if path.startswith('/settings') }}">Settings</a>
+  </nav>
+</header>
+<main>
+  {% if dry_run %}
+  <div class="banner warn">Email is not set up yet, so sends are <b>simulated</b> (logged but not delivered). <a href="/settings">Set it up</a>.</div>
+  {% endif %}
+  {% if msg %}<div class="banner ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="banner bad">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

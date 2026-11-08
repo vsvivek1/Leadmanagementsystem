@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Settings · School Leads{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<section class="panel">
+  <h2>Email account</h2>
+  <dl class="details">
+    <dt>Provider</dt><dd>{{ settings.provider }}</dd>
+    <dt>Address</dt><dd>{{ settings.email_address or 'not set' }}</dd>
+    <dt>Password</dt><dd>{{ 'set' if settings.email_password else 'not set' }}</dd>
+    <dt>Sending (SMTP)</dt><dd>{{ settings.smtp_host }}:{{ settings.smtp_port }} {% if settings.email_configured %}<span class="badge on">ready</span>{% else %}<span class="badge off">dry run</span>{% endif %}</dd>
+    <dt>Replies (IMAP)</dt><dd>{{ settings.imap_host }}:{{ settings.imap_port }} / {{ settings.imap_folder }} {% if settings.imap_configured %}<span class="badge on">ready</span>{% else %}<span class="badge off">off</span>{% endif %}</dd>
+    <dt>Sender name</dt><dd>{{ settings.sender_name or '—' }}</dd>
+    <dt>Sending hours</dt><dd>{{ settings.send_hours[0] }}:00 – {{ settings.send_hours[1] }}:00 {{ settings.timezone }}</dd>
+    <dt>Scheduler</dt><dd>{{ 'on' if settings.scheduler_enabled else 'off' }}: campaigns every {{ settings.send_every_minutes }} min, inbox every {{ settings.reply_check_minutes }} min</dd>
+  </dl>
+  <p class="muted small">These come from the <code>.env</code> file next to the app. Edit it and restart the app to change them. See the README for Gmail App Password steps.</p>
+</section>
+<section class="panel">
+  <h2>Send a test email</h2>
+  <form method="post" action="/settings/test" class="row">
+    <input type="email" name="to" required placeholder="you@example.com" value="{{ settings.email_address }}">
+    <button class="btn">Send test</button>
+  </form>
+</section>
+{% endblock %}

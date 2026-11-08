@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_status.html" import badge %}
+{% block title %}{{ lead.school or lead.email }} · School Leads{% endblock %}
+{% block content %}
+<p><a href="/leads">← All leads</a></p>
+<h1>{{ lead.school or lead.email }} {{ badge(lead.status) }}</h1>
+<div class="grid2">
+  <section class="panel">
+    <h2>Details</h2>
+    <dl class="details">
+      <dt>Contact</dt><dd>{{ lead.name or '—' }}</dd>
+      <dt>Email</dt><dd><a href="mailto:{{ lead.email }}">{{ lead.email }}</a></dd>
+      <dt>Phone</dt><dd>{{ lead.phone or '—' }}</dd>
+      <dt>City</dt><dd>{{ lead.city or '—' }}</dd>
+      {% for k, v in (lead.fields | fromjson).items() %}<dt>{{ k.replace('_', ' ') | capitalize }}</dt><dd>{{ v }}</dd>{% endfor %}
+      <dt>Emails sent</dt><dd>{{ lead.emails_sent }}</dd>
+      <dt>Added</dt><dd>{{ lead.created_at | dt }}{% if lead.source %} from {{ lead.source }}{% endif %}</dd>
+    </dl>
+  </section>
+  <section class="panel">
+    <h2>Update</h2>
+    <form method="post" action="/leads/{{ lead.id }}/update" class="stacked">
+      <label>Status
+        <select name="status">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if s == lead.status }}>{{ s.replace('_', ' ') }}</option>{% endfor %}</select>
+      </label>
+      <label>Notes<textarea name="notes" rows="4">{{ lead.notes }}</textarea></label>
+      <button class="btn">Save</button>
+    </form>
+    <hr>
+    <form method="post" action="/leads/{{ lead.id }}/send" class="row">
+      <select name="template_id">{% for t in templates_list %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select>
+      <button class="btn secondary">Send this template now</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Conversation</h2>
+  {% for item in timeline %}
+  <div class="msg {{ item.kind }}">
+    <div class="msg-head">
+      {% if item.kind == 'email' %}<b>Sent</b> · {{ item.subject }}
+        {% if item.status == 'failed' %}<span class="badge s-unsubscribed">failed</span> <span class="small bad-t">{{ item.error }}</span>
+        {% elif item.status == 'simulated' %}<span class="badge off">simulated</span>{% endif %}
+      {% else %}<b>Reply</b> from {{ item.from_addr }} · {{ item.subject }}{% endif %}
+      <span class="muted small right">{{ item.at | dt }}</span>
+    </div>
+    <pre class="msg-body">{{ item.body }}</pre>
+  </div>
+  {% else %}<p class="empty">No emails yet.</p>{% endfor %}
+</section>
+<form method="post" action="/leads/{{ lead.id }}/delete" onsubmit="return confirm('Delete this lead and its history?')">
+  <button class="btn danger small">Delete lead</button>
+</form>
+{% endblock %}

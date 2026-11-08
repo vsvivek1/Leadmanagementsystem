@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_status.html" import badge %}
+{% block title %}Leads · School Leads{% endblock %}
+{% block content %}
+<div class="row-between">
+  <h1>Leads <span class="muted">({{ total }})</span></h1>
+</div>
+<section class="panel">
+  <form class="upload" method="post" action="/leads/upload" enctype="multipart/form-data">
+    <label><b>Upload leads</b> (.xlsx or .csv)</label>
+    <input type="file" name="file" accept=".xlsx,.xlsm,.csv" required>
+    <button class="btn">Upload</button>
+    <a class="small" href="/leads/sample.xlsx">Download a sample file</a>
+  </form>
+  <p class="muted small">Needs an <b>Email</b> column. Name, School, Phone and City are picked up automatically; any other column (e.g. Board) can be used in templates as <code>{{ '{{ board }}' }}</code>. Re-uploading updates existing leads by email.</p>
+</section>
+
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search name, school, email, city…">
+  <select name="status" onchange="this.form.submit()">
+    <option value="">All statuses</option>
+    {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if s == status }}>{{ s.replace('_', ' ') }}</option>{% endfor %}
+  </select>
+  <button class="btn small">Filter</button>
+</form>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>School</th><th>Contact</th><th>City</th><th>Status</th><th>Emails</th><th>Last email</th><th>Last reply</th></tr></thead>
+  <tbody>
+  {% for l in leads %}
+    <tr>
+      <td><a href="/leads/{{ l.id }}">{{ l.school or '—' }}</a></td>
+      <td>{{ l.name }}<div class="muted small">{{ l.email }}</div></td>
+      <td>{{ l.city }}</td>
+      <td>
+        <form method="post" action="/leads/{{ l.id }}/status" class="inline">
+          <input type="hidden" name="next_url" value="{{ request.url.path }}?{{ request.url.query }}">
+          <select name="status" class="status-select s-{{ l.status }}" onchange="this.form.submit()">
+            {% for s in statuses %}<option value="{{ s }}" {{ 'selected' if s == l.status }}>{{ s.replace('_', ' ') }}</option>{% endfor %}
+          </select>
+        </form>
+      </td>
+      <td>{{ l.emails_sent }}</td>
+      <td class="nowrap small">{{ l.last_emailed_at | dt }}</td>
+      <td class="nowrap small">{{ l.last_reply_at | dt }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="empty">No leads{% if q or status %} match this filter{% else %} yet. Upload an Excel file above{% endif %}.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if pages > 1 %}
+<div class="pager">
+  {% for p in range(1, pages + 1) %}<a class="{{ 'on' if p == page_no }}" href="?q={{ q }}&status={{ status }}&page_no={{ p }}">{{ p }}</a>{% endfor %}
+</div>
+{% endif %}
+{% endblock %}
