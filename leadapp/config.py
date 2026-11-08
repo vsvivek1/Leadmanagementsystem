@@ -31,6 +31,11 @@ class Settings:
     database_url: str
     cron_secret: str
     max_send_per_run: int
+    wa_token: str
+    wa_phone_number_id: str
+    wa_verify_token: str
+    wa_app_secret: str
+    wa_country_code: str
     provider: str
     email_address: str
     email_password: str
@@ -50,6 +55,10 @@ class Settings:
     @property
     def email_configured(self) -> bool:
         return bool(self.email_address and self.email_password and self.smtp_host)
+
+    @property
+    def whatsapp_configured(self) -> bool:
+        return bool(self.wa_token and self.wa_phone_number_id)
 
     @property
     def imap_configured(self) -> bool:
@@ -77,6 +86,11 @@ def get_settings() -> Settings:
         database_url=os.environ.get("DATABASE_URL", ""),
         cron_secret=os.environ.get("CRON_SECRET", ""),
         max_send_per_run=_int("MAX_SEND_PER_RUN", 25),
+        wa_token=os.environ.get("WHATSAPP_TOKEN", ""),
+        wa_phone_number_id=os.environ.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+        wa_verify_token=os.environ.get("WHATSAPP_VERIFY_TOKEN", ""),
+        wa_app_secret=os.environ.get("WHATSAPP_APP_SECRET", ""),
+        wa_country_code=os.environ.get("WHATSAPP_COUNTRY_CODE", "91"),
         provider=provider,
         email_address=os.environ.get("EMAIL_ADDRESS", ""),
         email_password=os.environ.get("EMAIL_PASSWORD", ""),

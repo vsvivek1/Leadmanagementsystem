@@ -7,7 +7,7 @@
   <div class="card"><div class="k">Emailed</div><div class="v">{{ stats.contacted }}</div></div>
   <div class="card"><div class="k">Replied</div><div class="v">{{ stats.replied }}</div><div class="sub">{{ stats.reply_rate }}% reply rate</div></div>
   <div class="card"><div class="k">Interested</div><div class="v">{{ stats.interested }}</div></div>
-  <div class="card"><div class="k">Sent, last 7 days</div><div class="v">{{ stats.sent_week }}</div>{% if stats.failed_week %}<div class="sub bad-t">{{ stats.failed_week }} failed</div>{% endif %}</div>
+  <div class="card"><div class="k">Sent, last 7 days</div><div class="v">{{ stats.sent_week }}</div><div class="sub">{{ stats.sent_week - stats.wa_week }} email · {{ stats.wa_week }} WhatsApp{% if stats.wa_week %} ({{ stats.wa_read_week }} read){% endif %}</div>{% if stats.failed_week %}<div class="sub bad-t">{{ stats.failed_week }} failed</div>{% endif %}</div>
   <div class="card"><div class="k">Replies, last 7 days</div><div class="v">{{ stats.replies_week }}</div></div>
 </section>
 
@@ -54,7 +54,7 @@
     <tbody>
     {% for r in recent_replies %}
       <tr>
-        <td><a href="/leads/{{ r.lead_id }}">{{ r.school or r.name or r.from_addr }}</a><div class="muted small">{{ r.name }}</div></td>
+        <td><a href="/leads/{{ r.lead_id }}">{{ r.school or r.name or r.from_addr }}</a><div class="muted small">{% if r.channel == 'whatsapp' %}<span class="badge wa">WhatsApp</span> {% endif %}{{ r.name }}</div></td>
         <td class="snippet">{{ r.body[:160] }}{% if r.body|length > 160 %}…{% endif %}</td>
         <td>{{ badge(r.status) }}</td>
         <td class="nowrap small">{{ r.received_at | dt }}</td>
@@ -72,7 +72,7 @@
     <thead><tr><th>Campaign</th><th>Template</th><th>State</th><th>Sent</th><th>Leads replied</th></tr></thead>
     <tbody>
     {% for c in campaigns %}
-      <tr><td><a href="/campaigns">{{ c.name }}</a></td><td>{{ c.template_name }}</td>
+      <tr><td><a href="/campaigns">{{ c.name }}</a></td><td>{% if c.channel == 'whatsapp' %}WhatsApp: {{ c.wa_template }}{% else %}{{ c.template_name }}{% endif %}</td>
         <td>{% if c.active %}<span class="badge on">running</span>{% else %}<span class="badge off">paused</span>{% endif %}</td>
         <td>{{ c.sent }}</td><td>{{ c.replies }}</td></tr>
     {% endfor %}

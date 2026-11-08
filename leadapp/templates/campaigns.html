@@ -5,12 +5,12 @@
 <p class="muted">A running campaign emails matching leads automatically, every {{ settings.send_every_minutes }} minutes it checks who is due, between {{ settings.send_hours[0] }}:00 and {{ settings.send_hours[1] }}:00 ({{ settings.timezone }}). Leads who reply or unsubscribe are skipped.</p>
 <section class="panel">
   <table>
-    <thead><tr><th>Campaign</th><th>Template</th><th>Who</th><th>Schedule</th><th>Sent</th><th>Due now</th><th>Last run</th><th></th></tr></thead>
+    <thead><tr><th>Campaign</th><th>Message</th><th>Who</th><th>Schedule</th><th>Sent</th><th>Due now</th><th>Last run</th><th></th></tr></thead>
     <tbody>
     {% for c in campaigns %}
     <tr>
       <td><b>{{ c.name }}</b><br>{% if c.active %}<span class="badge on">running</span>{% else %}<span class="badge off">paused</span>{% endif %}</td>
-      <td>{{ c.template_name or '(deleted)' }}</td>
+      <td>{% if c.channel == 'whatsapp' %}<span class="badge wa">WhatsApp</span> {{ c.wa_template }}{% else %}<span class="badge mail">Email</span> {{ c.template_name or '(deleted)' }}{% endif %}</td>
       <td class="small">{{ c.statuses.replace(',', ', ') }}</td>
       <td class="small">every {{ c.interval_days }} days, up to {{ c.max_per_lead }} emails per lead, max {{ c.daily_limit }}/day</td>
       <td>{{ c.sent }}{% if c.failed %} <span class="bad-t small">({{ c.failed }} failed)</span>{% endif %}</td>
@@ -28,10 +28,16 @@
 </section>
 <section class="panel">
   <h2>New campaign</h2>
-  {% if templates_list %}
   <form method="post" action="/campaigns/create" class="grid-form">
     <label>Name<input name="name" required placeholder="e.g. Kerala schools – intro + follow-ups"></label>
-    <label>Template<select name="template_id">{% for t in templates_list %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+    <label>Send by
+      <select name="channel" id="channel" onchange="document.querySelectorAll('.only-email').forEach(e=>e.hidden=this.value!='email');document.querySelectorAll('.only-wa').forEach(e=>e.hidden=this.value!='whatsapp')">
+        <option value="email">Email</option><option value="whatsapp">WhatsApp</option>
+      </select></label>
+    <label class="only-email">Email template<select name="template_id">{% for t in templates_list %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+    <label class="only-wa" hidden>WhatsApp template name<input name="wa_template" placeholder="e.g. school_intro"><span class="muted small">Must be approved in Meta WhatsApp Manager.</span></label>
+    <label class="only-wa" hidden>Template language<input name="wa_lang" value="en"><span class="muted small">Language code from Meta, e.g. en, en_US, ml.</span></label>
+    <label class="only-wa" hidden>Fill {{ '{{1}}, {{2}}' }}… with<input name="wa_params" placeholder="e.g. name, school"><span class="muted small">Excel columns in order: name, school, city, or any other column.</span></label>
     <fieldset><legend>Send to leads with status</legend>
       {% for s in ['new', 'contacted'] %}<label class="check"><input type="checkbox" name="statuses" value="{{ s }}" checked> {{ s }}</label>{% endfor %}
     </fieldset>
@@ -40,6 +46,5 @@
     <label>Max emails per day<input type="number" name="daily_limit" value="50" min="1"><span class="muted small">Gmail allows ~500/day; stay well below.</span></label>
     <div><button class="btn">Create campaign</button></div>
   </form>
-  {% else %}<p>Create a <a href="/templates">template</a> first.</p>{% endif %}
 </section>
 {% endblock %}

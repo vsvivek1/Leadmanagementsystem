@@ -184,3 +184,84 @@ def test_cron_tick(settings):
     r = client.get("/cron/tick", headers={"Authorization": "Bearer tok"})
     assert r.status_code == 200 and r.json()["campaigns"]["1"]["sent"] == 2
     assert len(mailer.sent) == 2
+
+
+class FakeWA:
+    dry_run = False
+
+    def __init__(self):
+        self.sent = []
+
+    def send_template(self, to, name, lang, params):
+        self.sent.append(("template", to, name, lang, params))
+        return f"wamid.{len(self.sent)}"
+
+    def send_text(self, to, body):
+        self.sent.append(("text", to, body))
+        return f"wamid.{len(self.sent)}"
+
+
+def test_normalize_phone():
+    from leadapp.whatsapp import normalize_phone
+    assert normalize_phone("98765 43210") == "919876543210"
+    assert normalize_phone("09876543210") == "919876543210"
+    assert normalize_phone("+91-98765-43210") == "919876543210"
+    assert normalize_phone("+1 415 555 0100") == "14155550100"
+    assert normalize_phone("12345") == ""
+
+
+def test_whatsapp_campaign_webhook_and_phone_only_leads(settings):
+    mailer, wa = FakeMailer(), FakeWA()
+    s = replace(settings, wa_verify_token="vt")
+    client = TestClient(create_app(s, mailer, wa))
+    data = xlsx([["School", "Principal", "Email", "Mobile"],
+                 ["GV", "Anita Rao", "a@x.example", "98765 43210"],
+                 ["SM", "Thomas", "", "9876500000"],
+                 ["NoContact", "X", "", ""]])
+    r = client.post("/leads/upload", files={"file": ("l.xlsx", data)})
+    assert "2 new" in r.text and "1 skipped" in r.text
+    r = client.post("/campaigns/create", data={"name": "WA", "channel": "whatsapp", "wa_template": "school_intro",
+                                               "wa_lang": "en", "wa_params": "{{name}}, school", "statuses": ["new"]})
+    assert "Campaign created" in r.text
+    r = client.post("/campaigns/1/run")
+    assert "Sent 2" in r.text
+    assert sorted(m[1] for m in wa.sent) == ["919876500000", "919876543210"]
+    assert ("template", "919876543210", "school_intro", "en", ["Anita Rao", "GV"]) in wa.sent
+    # email campaign skips the phone-only lead
+    client.post("/campaigns/create", data={"name": "Mail", "channel": "email", "template_id": 1, "statuses": ["new", "contacted"]})
+    client.post("/campaigns/2/run")
+    assert [m[0] for m in mailer.sent] == ["a@x.example"]
+    # webhook verification
+    assert client.get("/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=42").text == "42"
+    assert client.get("/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=no&hub.challenge=42").status_code == 403
+    wamid = next(m for m in wa.sent if m[1] == "919876500000")
+    payload = {"entry": [{"changes": [{"value": {
+        "messages": [{"id": "wamid.in1", "from": "919876500000", "timestamp": "1794140000",
+                      "type": "text", "text": {"body": "Please share details"}}],
+        "statuses": [{"id": f"wamid.{wa.sent.index(wamid) + 1}", "status": "read"}],
+    }}]}]}
+    r = client.post("/whatsapp/webhook", json=payload)
+    assert r.json()["new_replies"] == 1
+    assert client.post("/whatsapp/webhook", json=payload).json()["new_replies"] == 0
+    db = Database(s.db_path, s.database_url)
+    lead = db.one("SELECT * FROM leads WHERE phone = '9876500000'")
+    assert lead["status"] == "replied" and lead["email"] is None
+    assert db.scalar("SELECT delivery FROM emails WHERE message_id = ?", (f"wamid.{wa.sent.index(wamid) + 1}",)) == "read"
+    # free-text reply from the lead page
+    r = client.post(f"/leads/{lead['id']}/whatsapp", data={"text": "Sure, sending now"})
+    assert "WhatsApp message sent" in r.text and wa.sent[-1] == ("text", "919876500000", "Sure, sending now")
+    for path in ("/", f"/leads/{lead['id']}", "/campaigns", "/settings", "/replies", "/leads"):
+        assert client.get(path).status_code == 200, path
+    # STOP opts out
+    payload["entry"][0]["changes"][0]["value"]["messages"][0].update(id="wamid.in2", text={"body": "STOP"})
+    client.post("/whatsapp/webhook", json=payload)
+    assert db.scalar("SELECT status FROM leads WHERE id = ?", (lead["id"],)) == "unsubscribed"
+
+
+def test_webhook_signature(settings):
+    client = TestClient(create_app(replace(settings, wa_app_secret="sec"), FakeMailer(), FakeWA()))
+    assert client.post("/whatsapp/webhook", json={}).status_code == 403
+    import hashlib, hmac
+    body = b'{"entry": []}'
+    sig = "sha256=" + hmac.new(b"sec", body, hashlib.sha256).hexdigest()
+    assert client.post("/whatsapp/webhook", content=body, headers={"x-hub-signature-256": sig}).status_code == 200

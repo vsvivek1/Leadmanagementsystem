@@ -99,3 +99,6 @@ legend { font-size: 13px; font-weight: 600; }
 .chip { cursor: pointer; }
 .actions { white-space: nowrap; }
 hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.badge.wa { background: #1fa855; }
+.badge.mail { background: #64748b; }
+[hidden] { display: none !important; }

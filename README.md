@@ -6,7 +6,8 @@ A small web app to manage school leads:
 2. **Write email templates** personalised with any column, e.g. `Dear {{ name }}, ... {{ school }} in {{ city }}`.
 3. **Run campaigns** that email leads automatically on a schedule (e.g. an intro, then follow-ups every 7 days, max 3 emails), within sending hours and a daily limit.
 4. **Read replies** from your inbox automatically. A lead who replies is marked *replied* and gets no more campaign emails; "unsubscribe / not interested" replies mark them *unsubscribed*.
-5. **Dashboard** with lead counts by status, emails sent, reply rate, a 14-day chart, latest replies and each lead's full conversation.
+5. **WhatsApp (official Business API):** bulk WhatsApp campaigns using your Meta-approved templates, replies and delivered/read ticks via webhook, and one-to-one replies from the lead page. "STOP" replies unsubscribe the lead. Leads with only a phone number (no email) are supported.
+6. **Dashboard** with lead counts by status, emails sent, reply rate, a 14-day chart, latest replies and each lead's full conversation.
 
 Built with Python (FastAPI + SQLite). Email works with any provider through SMTP (sending) and IMAP (reading replies); Gmail, Outlook and Zoho are preset.
 
@@ -33,9 +34,25 @@ Until `EMAIL_ADDRESS` and `EMAIL_PASSWORD` are set, the app runs in **dry-run mo
 
 Gmail sends up to ~500 emails/day (2,000 on Workspace). Keep each campaign's daily limit well below that.
 
+## WhatsApp setup (Meta WhatsApp Cloud API)
+
+1. In https://developers.facebook.com create an app of type **Business** and add the **WhatsApp** product.
+2. Add and verify your business phone number. Copy its **Phone number ID**.
+3. Create a permanent access token (Business Settings → System users → Generate token with `whatsapp_business_messaging`).
+4. In WhatsApp Manager create a **message template** (e.g. `school_intro` with `Hello {{1}}, ... {{2}} ...`) and wait for approval.
+5. Set `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN` (any string) and `WHATSAPP_APP_SECRET`.
+6. In the app's WhatsApp → Configuration, set the webhook URL to `https://<your-app>/whatsapp/webhook` with the same verify token, and subscribe to **messages**.
+7. In the app: Campaigns → New campaign → Send by **WhatsApp**, enter the template name and which columns fill `{{1}}`, `{{2}}` (e.g. `name, school`).
+
+Meta only allows approved templates to start a conversation. Free-text messages work within 24 hours of the lead's last message.
+
+## Deploying on Vercel
+
+`vercel.json` routes everything to `api/index.py`. Set `DATABASE_URL` (Postgres, e.g. Supabase pooler on port 6543), `CRON_SECRET`, `APP_PASSWORD` and the email/WhatsApp variables. Serverless functions can't run a background scheduler, so call `https://<your-app>/cron/tick?key=<CRON_SECRET>` every 10 minutes (e.g. Supabase `pg_cron` + `pg_net`).
+
 ## Excel format
 
-Only an **Email** column is required. These are recognised automatically (case and spacing don't matter):
+An **Email** or **Phone** column is required (phone-only rows are WhatsApp-only leads). These are recognised automatically (case and spacing don't matter):
 
 | Field  | Header examples |
 |--------|-----------------|

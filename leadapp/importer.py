@@ -95,7 +95,12 @@ def import_leads(db: Database, filename: str, content: bytes) -> ImportResult:
             header_idx = i
             break
     if header_idx is None:
-        result.skipped.append("No 'Email' column found. Add a column named Email.")
+        for i, row in enumerate(rows[:10]):
+            if "phone" in map_headers(row).values():
+                header_idx = i
+                break
+    if header_idx is None:
+        result.skipped.append("No 'Email' or 'Phone' column found. Add a column named Email or Phone.")
         return result
 
     mapping = map_headers(rows[header_idx])
@@ -115,14 +120,23 @@ def import_leads(db: Database, filename: str, content: bytes) -> ImportResult:
                 else:
                     lead[target] = value
             email = lead["email"].lower()
+            phone_key = re.sub(r"\D", "", lead["phone"])[-10:]
             if not EMAIL_RE.match(email):
-                result.skipped.append(f"Row {line_no}: invalid or missing email '{lead['email']}'")
+                if len(phone_key) < 10:
+                    result.skipped.append(f"Row {line_no}: no valid email or phone ('{lead['email']}', '{lead['phone']}')")
+                    continue
+                email = ""  # phone-only lead (WhatsApp)
+            key = email or "tel:" + phone_key
+            if key in seen:
+                result.skipped.append(f"Row {line_no}: duplicate of {email or lead['phone']} earlier in the file")
                 continue
-            if email in seen:
-                result.skipped.append(f"Row {line_no}: duplicate of {email} earlier in the file")
-                continue
-            seen.add(email)
-            existing = conn.execute("SELECT id, fields FROM leads WHERE email = ?", (email,)).fetchone()
+            seen.add(key)
+            if email:
+                existing = conn.execute("SELECT id, fields FROM leads WHERE email = ?", (email,)).fetchone()
+            else:
+                existing = next((r for r in conn.execute(
+                    "SELECT id, fields, phone FROM leads WHERE email IS NULL AND phone LIKE ?", (f"%{phone_key[-6:]}",)
+                ).fetchall() if re.sub(r"\D", "", r["phone"])[-10:] == phone_key), None)
             if existing:
                 fields = json.loads(existing["fields"] or "{}")
                 fields.update(extra)
@@ -137,7 +151,7 @@ def import_leads(db: Database, filename: str, content: bytes) -> ImportResult:
                 conn.execute(
                     "INSERT INTO leads(name, email, school, phone, city, fields, source, created_at)"
                     " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-                    (lead["name"], email, lead["school"], lead["phone"], lead["city"],
+                    (lead["name"], email or None, lead["school"], lead["phone"], lead["city"],
                      json.dumps(extra), filename, now()),
                 )
                 result.added += 1

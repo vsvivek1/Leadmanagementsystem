@@ -15,7 +15,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads (
     id INTEGER PRIMARY KEY,
     name TEXT DEFAULT '',
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email TEXT UNIQUE COLLATE NOCASE,
     school TEXT DEFAULT '',
     phone TEXT DEFAULT '',
     city TEXT DEFAULT '',
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE TABLE IF NOT EXISTS campaigns (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    template_id INTEGER NOT NULL REFERENCES templates(id),
+    template_id INTEGER REFERENCES templates(id),
     statuses TEXT NOT NULL DEFAULT 'new,contacted',
     interval_days INTEGER NOT NULL DEFAULT 7,
     max_per_lead INTEGER NOT NULL DEFAULT 3,
@@ -81,7 +81,7 @@ PG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads (
     id BIGSERIAL PRIMARY KEY,
     name TEXT DEFAULT '',
-    email TEXT NOT NULL UNIQUE,
+    email TEXT UNIQUE,
     school TEXT DEFAULT '',
     phone TEXT DEFAULT '',
     city TEXT DEFAULT '',
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE TABLE IF NOT EXISTS campaigns (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,
-    template_id BIGINT NOT NULL REFERENCES templates(id),
+    template_id BIGINT REFERENCES templates(id),
     statuses TEXT NOT NULL DEFAULT 'new,contacted',
     interval_days INTEGER NOT NULL DEFAULT 7,
     max_per_lead INTEGER NOT NULL DEFAULT 3,
@@ -143,6 +143,18 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
+# Columns added after the first release. Applied on startup if missing.
+MIGRATIONS = [
+    ("emails", "channel", "TEXT NOT NULL DEFAULT 'email'"),
+    ("emails", "delivery", "TEXT DEFAULT ''"),
+    ("replies", "channel", "TEXT NOT NULL DEFAULT 'email'"),
+    ("campaigns", "channel", "TEXT NOT NULL DEFAULT 'email'"),
+    ("campaigns", "wa_template", "TEXT DEFAULT ''"),
+    ("campaigns", "wa_lang", "TEXT DEFAULT 'en'"),
+    ("campaigns", "wa_params", "TEXT DEFAULT ''"),
+]
+
+
 def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -178,6 +190,26 @@ class Database:
                         conn.execute(stmt)
             else:
                 conn.raw.executescript(SCHEMA)
+        self._migrate()
+
+    def _columns(self, table: str) -> set[str]:
+        if self.pg:
+            rows = self.all("SELECT column_name AS name FROM information_schema.columns"
+                            " WHERE table_schema = 'leadapp' AND table_name = ?", (table,))
+        else:
+            rows = self.all(f"PRAGMA table_info({table})")
+        return {r["name"] for r in rows}
+
+    def _migrate(self) -> None:
+        cols: dict[str, set[str]] = {}
+        for table, column, ddl in MIGRATIONS:
+            if table not in cols:
+                cols[table] = self._columns(table)
+            if column not in cols[table]:
+                self.run(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        if self.pg:
+            self.run("ALTER TABLE campaigns ALTER COLUMN template_id DROP NOT NULL")
+            self.run("ALTER TABLE leads ALTER COLUMN email DROP NOT NULL")
 
     def _pg_conn(self):
         import psycopg

@@ -9,7 +9,7 @@
 <p class="muted small">The inbox is checked automatically every {{ settings.reply_check_minutes }} minutes. Replies from a lead mark them as <b>replied</b> and stop further campaign emails; replies asking to unsubscribe mark them <b>unsubscribed</b>.</p>
 {% for r in replies %}
 <div class="msg reply">
-  <div class="msg-head"><a href="/leads/{{ r.lead_id }}"><b>{{ r.school or r.name or r.from_addr }}</b></a> {{ badge(r.status) }} · {{ r.subject }}
+  <div class="msg-head"><a href="/leads/{{ r.lead_id }}"><b>{{ r.school or r.name or r.from_addr }}</b></a> {{ badge(r.status) }}{% if r.channel == 'whatsapp' %} <span class="badge wa">WhatsApp</span> {{ r.from_addr }}{% else %} · {{ r.subject }}{% endif %}
     <span class="muted small right">{{ r.received_at | dt }}</span></div>
   <pre class="msg-body">{{ r.body }}</pre>
 </div>

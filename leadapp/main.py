@@ -20,6 +20,7 @@ from .config import Settings, get_settings
 from .db import LEAD_STATUSES, Database, now
 from .importer import import_leads, sample_workbook
 from .mailer import SmtpImapMailer
+from .whatsapp import WhatsAppClient, parse_webhook, valid_signature
 from .templating import render_email, validate
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -38,10 +39,11 @@ DEFAULT_TEMPLATE = {
 }
 
 
-def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
+def create_app(settings: Settings | None = None, mailer=None, wa=None) -> FastAPI:
     settings = settings or get_settings()
     db = Database(settings.db_path, settings.database_url)
     mailer = mailer or SmtpImapMailer(settings)
+    wa = wa or WhatsAppClient(settings)
     if not db.scalar("SELECT COUNT(*) FROM templates"):
         db.run("INSERT INTO templates(name, subject, body, created_at) VALUES(?, ?, ?, ?)",
                (DEFAULT_TEMPLATE["name"], DEFAULT_TEMPLATE["subject"], DEFAULT_TEMPLATE["body"], now()))
@@ -49,7 +51,7 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
     scheduler = BackgroundScheduler(timezone=settings.timezone)
 
     def send_job():
-        for cid, res in engine.run_active_campaigns(db, mailer, settings).items():
+        for cid, res in engine.run_active_campaigns(db, mailer, settings, wa).items():
             if res.sent or res.failed:
                 log.info("Campaign %s: sent %s, failed %s", cid, res.sent, res.failed)
 
@@ -83,7 +85,7 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
 
     @app.middleware("http")
     async def basic_auth(request: Request, call_next):
-        if settings.app_password and not request.url.path.startswith(("/static", "/cron/")):
+        if settings.app_password and not request.url.path.startswith(("/static", "/cron/", "/whatsapp/webhook")):
             header = request.headers.get("authorization", "")
             ok = False
             if header.lower().startswith("basic "):
@@ -99,7 +101,7 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
     def page(request: Request, name: str, **ctx):
         ctx.update(request=request, msg=request.query_params.get("msg", ""),
                    err=request.query_params.get("err", ""), settings=settings,
-                   dry_run=mailer.dry_run, statuses=LEAD_STATUSES)
+                   dry_run=mailer.dry_run, wa_dry_run=wa.dry_run, statuses=LEAD_STATUSES)
         return templates.TemplateResponse(request, name, ctx)
 
     def back(url: str, msg: str = "", err: str = ""):
@@ -126,6 +128,8 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
             "replied": replied_leads,
             "reply_rate": round(100 * replied_leads / contacted) if contacted else 0,
             "sent_week": db.scalar("SELECT COUNT(*) FROM emails WHERE status IN ('sent','simulated') AND sent_at > ?", (week_ago,)),
+            "wa_week": db.scalar("SELECT COUNT(*) FROM emails WHERE channel = 'whatsapp' AND status IN ('sent','simulated') AND sent_at > ?", (week_ago,)),
+            "wa_read_week": db.scalar("SELECT COUNT(*) FROM emails WHERE channel = 'whatsapp' AND delivery = 'read' AND sent_at > ?", (week_ago,)),
             "failed_week": db.scalar("SELECT COUNT(*) FROM emails WHERE status = 'failed' AND sent_at > ?", (week_ago,)),
             "replies_week": db.scalar("SELECT COUNT(*) FROM replies WHERE received_at > ?", (week_ago,)),
             "interested": counts["interested"],
@@ -226,6 +230,15 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
         return back(f"/leads/{lead_id}", msg="Email sent" + (" (dry run)" if mailer.dry_run else "")) if ok \
             else back(f"/leads/{lead_id}", err=f"Send failed: {error}")
 
+    @app.post("/leads/{lead_id}/whatsapp")
+    def lead_whatsapp(lead_id: int, text: str = Form(...)):
+        lead = db.one("SELECT * FROM leads WHERE id = ?", (lead_id,))
+        if not lead:
+            raise HTTPException(404)
+        ok, error = engine.send_whatsapp(db, wa, settings, lead, text=text)
+        return back(f"/leads/{lead_id}", msg="WhatsApp message sent" + (" (dry run)" if wa.dry_run else "")) if ok \
+            else back(f"/leads/{lead_id}", err=f"WhatsApp failed: {error}")
+
     @app.post("/leads/{lead_id}/delete")
     def lead_delete(lead_id: int):
         db.run("DELETE FROM leads WHERE id = ?", (lead_id,))
@@ -284,11 +297,24 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
                     templates_list=db.all("SELECT id, name FROM templates ORDER BY name"))
 
     @app.post("/campaigns/create")
-    def campaign_create(name: str = Form(...), template_id: int = Form(...), statuses: list[str] = Form(["new"]),
+    def campaign_create(name: str = Form(...), channel: str = Form("email"), template_id: int = Form(0),
+                        wa_template: str = Form(""), wa_lang: str = Form("en"), wa_params: str = Form(""),
+                        statuses: list[str] = Form(["new"]),
                         interval_days: int = Form(7), max_per_lead: int = Form(3), daily_limit: int = Form(50)):
-        db.run("INSERT INTO campaigns(name, template_id, statuses, interval_days, max_per_lead, daily_limit, created_at)"
-               " VALUES(?, ?, ?, ?, ?, ?, ?)",
-               (name, template_id, ",".join(statuses), max(interval_days, 0), max(max_per_lead, 1), max(daily_limit, 1), now()))
+        if channel == "whatsapp":
+            if not wa_template.strip():
+                return back("/campaigns", err="Enter the name of your approved WhatsApp template.")
+            template_id = None
+        else:
+            channel = "email"
+            if not db.scalar("SELECT 1 FROM templates WHERE id = ?", (template_id,)):
+                return back("/campaigns", err="Pick an email template.")
+            wa_template = wa_params = ""
+        params = ",".join(p.strip().strip("{} ") for p in wa_params.split(",") if p.strip())
+        db.run("INSERT INTO campaigns(name, template_id, statuses, interval_days, max_per_lead, daily_limit, created_at,"
+               " channel, wa_template, wa_lang, wa_params) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               (name, template_id, ",".join(statuses), max(interval_days, 0), max(max_per_lead, 1), max(daily_limit, 1),
+                now(), channel, wa_template.strip(), wa_lang.strip() or "en", params))
         return back("/campaigns", msg="Campaign created. Turn it on to start sending.")
 
     @app.post("/campaigns/{cid}/toggle")
@@ -298,7 +324,7 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
 
     @app.post("/campaigns/{cid}/run")
     def campaign_run(cid: int):
-        res = engine.run_campaign(db, mailer, settings, cid, ignore_hours=True)
+        res = engine.run_campaign(db, mailer, settings, cid, ignore_hours=True, wa=wa)
         msg = f"Sent {res.sent}, failed {res.failed}."
         if res.skipped_reason:
             msg += f" {res.skipped_reason}."
@@ -342,8 +368,30 @@ def create_app(settings: Settings | None = None, mailer=None) -> FastAPI:
             db.set_meta("last_reply_error", str(exc))
             out["reply_error"] = str(exc)
         out["campaigns"] = {cid: {"sent": r.sent, "failed": r.failed, "note": r.skipped_reason}
-                            for cid, r in engine.run_active_campaigns(db, mailer, settings).items()}
+                            for cid, r in engine.run_active_campaigns(db, mailer, settings, wa).items()}
         return out
+
+    # ---------- WhatsApp webhook (Meta calls this with replies and delivery status) ----------
+    @app.get("/whatsapp/webhook")
+    def wa_verify(request: Request):
+        q = request.query_params
+        if (q.get("hub.mode") == "subscribe" and settings.wa_verify_token
+                and secrets.compare_digest(q.get("hub.verify_token", ""), settings.wa_verify_token)):
+            return Response(q.get("hub.challenge", ""), media_type="text/plain")
+        raise HTTPException(403)
+
+    @app.post("/whatsapp/webhook")
+    async def wa_webhook(request: Request):
+        body = await request.body()
+        if not valid_signature(settings.wa_app_secret, body, request.headers.get("x-hub-signature-256", "")):
+            raise HTTPException(403)
+        try:
+            payload = json.loads(body or b"{}")
+        except ValueError:
+            raise HTTPException(400)
+        messages, statuses_ = parse_webhook(payload)
+        n = engine.process_whatsapp_webhook(db, settings, messages, statuses_)
+        return {"ok": True, "new_replies": n}
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request):

@@ -17,6 +17,16 @@
   <p class="muted small">These come from the <code>.env</code> file next to the app. Edit it and restart the app to change them. See the README for Gmail App Password steps.</p>
 </section>
 <section class="panel">
+  <h2>WhatsApp</h2>
+  <dl class="details">
+    <dt>Status</dt><dd>{% if settings.whatsapp_configured %}<span class="badge on">ready</span>{% else %}<span class="badge off">dry run</span> not connected yet{% endif %}</dd>
+    <dt>Phone number ID</dt><dd>{{ settings.wa_phone_number_id or '—' }}</dd>
+    <dt>Webhook URL</dt><dd><code>{{ request.base_url }}whatsapp/webhook</code></dd>
+    <dt>Verify token</dt><dd>{{ 'set' if settings.wa_verify_token else 'not set' }}</dd>
+    <dt>Default country code</dt><dd>+{{ settings.wa_country_code }} (added to 10-digit numbers)</dd>
+  </dl>
+</section>
+<section class="panel">
   <h2>Send a test email</h2>
   <form method="post" action="/settings/test" class="row">
     <input type="email" name="to" required placeholder="you@example.com" value="{{ settings.email_address }}">

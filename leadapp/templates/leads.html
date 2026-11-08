@@ -31,7 +31,7 @@
   {% for l in leads %}
     <tr>
       <td><a href="/leads/{{ l.id }}">{{ l.school or '—' }}</a></td>
-      <td>{{ l.name }}<div class="muted small">{{ l.email }}</div></td>
+      <td>{{ l.name }}<div class="muted small">{{ l.email or "" }}{% if l.phone %}{% if l.email %} · {% endif %}{{ l.phone }}{% endif %}</div></td>
       <td>{{ l.city }}</td>
       <td>
         <form method="post" action="/leads/{{ l.id }}/status" class="inline">
